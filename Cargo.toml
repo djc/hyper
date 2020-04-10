@@ -28,9 +28,11 @@ http = "0.2"
 http-body = "0.3.1"
 httparse = "1.0"
 h2 = "0.2.2"
+h3 = { package = "quinn-h3", git = "https://github.com/djc/quinn", rev = "907c76c45a98f16fe6b96f791c5412a24ec87f64", optional = true }
 itoa = "0.4.1"
 log = "0.4"
 pin-project = "0.4"
+quinn = { path = "../quinn/quinn", optional = true }
 time = "0.1"
 tower-service = "0.3"
 tokio = { version = "0.2.5", features = ["sync"] }
@@ -70,6 +72,7 @@ tcp = [
     "tokio/tcp",
     "tokio/time",
 ]
+quinn-h3 = ["h3", "quinn"]
 
 # `impl Stream` for things
 stream = []
@@ -209,4 +212,3 @@ required-features = ["runtime", "stream"]
 name = "server"
 path = "tests/server.rs"
 required-features = ["runtime"]
-

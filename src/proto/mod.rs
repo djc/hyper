@@ -6,8 +6,8 @@ use http_body::Body as HttpBody;
 use pin_project::{pin_project, project};
 
 use crate::{
-    common::{task, Future, Pin, Poll},
     common::exec::Task,
+    common::{task, Future, Pin, Poll},
     Response,
 };
 
@@ -16,6 +16,8 @@ pub(crate) use self::h1::{dispatch, Conn, ServerTransaction};
 
 pub(crate) mod h1;
 pub(crate) mod h2;
+#[cfg(feature = "quinn-h3")]
+pub(crate) mod h3;
 
 /// An Incoming Message head. Includes request/status line, and headers.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -60,12 +62,15 @@ where
     B: HttpBody,
 {
     H2(#[pin] h2::server::H2Stream<F, B>),
+    #[cfg(feature = "quinn-h3")]
+    H3(#[pin] h3::server::H3Stream<F, B>),
 }
 
 impl<F, B, E> Future for HttpStream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>>,
-    B: HttpBody,
+    B: HttpBody + Send + 'static,
+    B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -75,17 +80,20 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         #[project]
         match self.project() {
-            HttpStream::H2(h2) => {
-                h2.poll2(cx).map(|res| {
-                    if let Err(e) = res {
-                        debug!("stream error: {}", e);
-                    }
-                })
-            }
+            HttpStream::H2(h2) => h2.poll2(cx).map(|res| {
+                if let Err(e) = res {
+                    debug!("stream error: {}", e);
+                }
+            }),
+            #[cfg(feature = "quinn-h3")]
+            HttpStream::H3(h3) => h3.poll3(cx).map(|res| {
+                if let Err(e) = res {
+                    debug!("stream error: {}", e);
+                }
+            }),
         }
     }
 }
-
 
 impl<F, B, E> Task for HttpStream<F, B>
 where

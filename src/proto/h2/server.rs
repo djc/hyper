@@ -363,7 +363,10 @@ where
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
     #[project]
-    pub(crate) fn poll2(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<crate::Result<()>> {
+    pub(crate) fn poll2(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<crate::Result<()>> {
         let mut me = self.project();
         loop {
             #[project]

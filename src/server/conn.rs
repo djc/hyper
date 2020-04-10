@@ -134,6 +134,8 @@ where
         >,
     ),
     H2(#[pin] proto::h2::Server<Rewind<T>, S, B, E>),
+    #[cfg(feature = "quinn-h3")]
+    H3(#[pin] proto::h3::Server<S, B, E>),
 }
 
 #[derive(Clone, Debug)]
@@ -518,6 +520,10 @@ where
             Some(ProtoServer::H2(ref mut h2)) => {
                 h2.graceful_shutdown();
             }
+            #[cfg(feature = "quinn-h3")]
+            Some(ProtoServer::H3(ref mut h3)) => {
+                h3.graceful_shutdown();
+            }
             None => (),
         }
     }
@@ -551,6 +557,8 @@ where
                 })
             }
             ProtoServer::H2(_h2) => None,
+            #[cfg(feature = "quinn-h3")]
+            ProtoServer::H3(_h3) => None,
         }
     }
 
@@ -575,6 +583,8 @@ where
             let polled = match *self.conn.as_mut().unwrap() {
                 ProtoServer::H1(ref mut h1) => h1.poll_without_shutdown(cx),
                 ProtoServer::H2(ref mut h2) => return Pin::new(h2).poll(cx).map_ok(|_| ()),
+                #[cfg(feature = "quinn-h3")]
+                ProtoServer::H3(ref mut h3) => return Pin::new(h3).poll(cx).map_ok(|_| ()),
             };
             match ready!(polled) {
                 Ok(()) => return Poll::Ready(Ok(())),
@@ -611,7 +621,11 @@ where
         let (io, read_buf, dispatch) = match conn.unwrap() {
             ProtoServer::H1(h1) => h1.into_inner(),
             ProtoServer::H2(_h2) => {
-                panic!("h2 cannot into_inner");
+                panic!("h2 or h3 cannot into_inner");
+            }
+            #[cfg(feature = "quinn-h3")]
+            ProtoServer::H3(_h3) => {
+                panic!("h3 cannot into_inner");
             }
         };
         let mut rewind_io = Rewind::new(io);
@@ -825,6 +839,8 @@ where
         match self.project() {
             ProtoServer::H1(s) => s.poll(cx),
             ProtoServer::H2(s) => s.poll(cx),
+            #[cfg(feature = "quinn-h3")]
+            ProtoServer::H3(s) => s.poll(cx),
         }
     }
 }

@@ -42,6 +42,11 @@ enum Kind {
         content_length: DecodedLength,
         recv: h2::RecvStream,
     },
+    #[cfg(feature = "quinn-h3")]
+    H3 {
+        content_length: DecodedLength,
+        recv: h3::RecvBody,
+    },
     // NOTE: This requires `Sync` because of how easy it is to use `await`
     // while a borrow of a `Request<Body>` exists.
     //
@@ -191,6 +196,14 @@ impl Body {
         body
     }
 
+    #[cfg(feature = "quinn-h3")]
+    pub(crate) fn h3(recv: h3::RecvBody, content_length: DecodedLength) -> Self {
+        Body::new(Kind::H3 {
+            content_length,
+            recv,
+        })
+    }
+
     pub(crate) fn set_on_upgrade(&mut self, upgrade: OnUpgrade) {
         debug_assert!(!upgrade.is_none(), "set_on_upgrade with empty upgrade");
         let extra = self.extra_mut();
@@ -278,7 +291,14 @@ impl Body {
                 Some(Err(e)) => Poll::Ready(Some(Err(crate::Error::new_body(e)))),
                 None => Poll::Ready(None),
             },
-
+            #[cfg(feature = "quinn-h3")]
+            Kind::H3 {
+                recv: ref mut h3, ..
+            } => match ready!(Pin::new(h3).poll_data(cx)) {
+                Some(Ok(bytes)) => Poll::Ready(Some(Ok(bytes))),
+                Some(Err(e)) => Poll::Ready(Some(Err(crate::Error::new_body(e)))),
+                None => Poll::Ready(None),
+            },
             #[cfg(feature = "stream")]
             Kind::Wrapped(ref mut s) => match ready!(s.as_mut().poll_next(cx)) {
                 Some(res) => Poll::Ready(Some(res.map_err(crate::Error::new_body))),
@@ -331,6 +351,13 @@ impl HttpBody for Body {
                 }
                 Err(e) => Poll::Ready(Err(crate::Error::new_h2(e))),
             },
+            #[cfg(feature = "quinn-h3")]
+            Kind::H3 {
+                recv: ref mut h3, ..
+            } => match ready!(Pin::new(h3).poll_trailers(cx)) {
+                Ok(t) => Poll::Ready(Ok(t)),
+                Err(e) => Poll::Ready(Err(crate::Error::new_h3(e))),
+            },
             _ => Poll::Ready(Ok(None)),
         }
     }
@@ -340,6 +367,8 @@ impl HttpBody for Body {
             Kind::Once(ref val) => val.is_none(),
             Kind::Chan { content_length, .. } => content_length == DecodedLength::ZERO,
             Kind::H2 { recv: ref h2, .. } => h2.is_end_stream(),
+            #[cfg(feature = "quinn-h3")]
+            Kind::H3 { recv: ref h3, .. } => h3.is_end_stream(),
             #[cfg(feature = "stream")]
             Kind::Wrapped(..) => false,
         }
@@ -352,6 +381,16 @@ impl HttpBody for Body {
             #[cfg(feature = "stream")]
             Kind::Wrapped(..) => SizeHint::default(),
             Kind::Chan { content_length, .. } | Kind::H2 { content_length, .. } => {
+                let mut hint = SizeHint::default();
+
+                if let Some(content_length) = content_length.into_opt() {
+                    hint.set_exact(content_length);
+                }
+
+                hint
+            }
+            #[cfg(feature = "quinn-h3")]
+            Kind::H3 { content_length, .. } => {
                 let mut hint = SizeHint::default();
 
                 if let Some(content_length) = content_length.into_opt() {

@@ -50,6 +50,9 @@ pub(crate) enum Kind {
 
     /// A general error from h2.
     Http2,
+    /// A general error from h3.
+    #[cfg(feature = "quinn-h3")]
+    Http3,
 }
 
 #[derive(Debug, PartialEq)]
@@ -183,6 +186,22 @@ impl Error {
             .unwrap_or(h2::Reason::INTERNAL_ERROR)
     }
 
+    #[cfg(feature = "quinn-h3")]
+    pub(crate) fn h3_reason(&self) -> h3::HttpError {
+        // Find an h3::Error somewhere in the cause stack, if it exists,
+        // otherwise assume an INTERNAL_ERROR.
+        let mut cause = self.source();
+        while let Some(err) = cause {
+            if let Some(h3_err) = err.downcast_ref::<h3::Error>() {
+                return h3_err.reason().unwrap_or(h3::HttpError::InternalError);
+            }
+            cause = err.source();
+        }
+
+        // else
+        h3::HttpError::InternalError
+    }
+
     pub(crate) fn new_canceled() -> Error {
         Error::new(Kind::Canceled)
     }
@@ -292,6 +311,15 @@ impl Error {
         }
     }
 
+    #[cfg(feature = "quinn-h3")]
+    pub(crate) fn new_h3(cause: ::h3::Error) -> Error {
+        if let h3::Error::Io(err) = cause {
+            Error::new_io(err)
+        } else {
+            Error::new(Kind::Http3).with(cause)
+        }
+    }
+
     fn description(&self) -> &str {
         match self.inner.kind {
             Kind::Parse(Parse::Method) => "invalid HTTP method parsed",
@@ -314,6 +342,8 @@ impl Error {
             Kind::BodyWriteAborted => "body write aborted",
             Kind::Shutdown => "error shutting down connection",
             Kind::Http2 => "http2 error",
+            #[cfg(feature = "quinn-h3")]
+            Kind::Http3 => "http3 error",
             Kind::Io => "connection error",
 
             Kind::User(User::Body) => "error from user's HttpBody stream",
