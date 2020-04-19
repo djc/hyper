@@ -9,7 +9,7 @@ use pin_project::{pin_project, project};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{decode_content_length, ping, PipeToSendStream, SendBuf};
-use crate::body::Payload;
+use crate::body::HttpBody;
 use crate::common::{exec::Executor, exec::Task, task, Future, Pin, Poll};
 use crate::headers;
 use crate::proto::Dispatched;
@@ -57,7 +57,7 @@ impl Default for Config {
 pub(crate) struct Server<T, S, B, E>
 where
     S: HttpService<Body>,
-    B: Payload,
+    B: HttpBody,
 {
     exec: E,
     service: S,
@@ -66,7 +66,7 @@ where
 
 enum State<T, B>
 where
-    B: Payload,
+    B: HttpBody,
 {
     Handshaking {
         ping_config: ping::Config,
@@ -78,7 +78,7 @@ where
 
 struct Serving<T, B>
 where
-    B: Payload,
+    B: HttpBody,
 {
     ping: Option<(ping::Recorder, ping::Ponger)>,
     conn: Connection<T, SendBuf<B::Data>>,
@@ -90,7 +90,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Payload,
+    B: HttpBody + 'static,
     E: Executor<H2Stream<S::Future, B>>,
 {
     pub(crate) fn new(io: T, service: S, config: &Config, exec: E) -> Server<T, S, B, E> {
@@ -156,7 +156,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Payload,
+    B: HttpBody + 'static,
     E: Executor<H2Stream<S::Future, B>>,
 {
     type Output = crate::Result<Dispatched>;
@@ -200,7 +200,7 @@ where
 impl<T, B> Serving<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Payload,
+    B: HttpBody + 'static,
 {
     fn poll_server<S, E>(
         &mut self,
@@ -314,7 +314,7 @@ where
 #[pin_project]
 pub struct H2Stream<F, B>
 where
-    B: Payload,
+    B: HttpBody,
 {
     reply: SendResponse<SendBuf<B::Data>>,
     #[pin]
@@ -324,7 +324,7 @@ where
 #[pin_project]
 enum H2StreamState<F, B>
 where
-    B: Payload,
+    B: HttpBody,
 {
     Service(#[pin] F),
     Body(#[pin] PipeToSendStream<B>),
@@ -332,7 +332,7 @@ where
 
 impl<F, B> H2Stream<F, B>
 where
-    B: Payload,
+    B: HttpBody,
 {
     fn new(fut: F, respond: SendResponse<SendBuf<B::Data>>) -> H2Stream<F, B> {
         H2Stream {
@@ -358,7 +358,8 @@ macro_rules! reply {
 impl<F, B, E> H2Stream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>>,
-    B: Payload,
+    B: HttpBody,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
     #[project]
@@ -423,7 +424,8 @@ where
 impl<F, B, E> Future for H2Stream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>>,
-    B: Payload,
+    B: HttpBody,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
     type Output = ();
@@ -440,7 +442,9 @@ where
 impl<F, B, E> Task for H2Stream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>> + Send + 'static,
-    B: Payload,
+    B: HttpBody + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
 }
@@ -448,7 +452,7 @@ where
 impl<F, B, E> crate::common::exec::sealed::Sealed for H2Stream<F, B>
 where
     F: Future<Output = Result<Response<B>, E>> + Send + 'static,
-    B: Payload,
+    B: HttpBody,
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
 }

@@ -5,7 +5,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::conn::{spawn_all::NewSvcTask, SpawnAll, UpgradeableConnection, Watcher};
 use super::Accept;
-use crate::body::{Body, Payload};
+use crate::body::{Body, HttpBody};
 use crate::common::drain::{self, Draining, Signal, Watch, Watching};
 use crate::common::exec::Executor;
 use crate::common::{task, Future, Pin, Poll, Unpin};
@@ -51,7 +51,8 @@ where
     IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     S: MakeServiceRef<IO, Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Payload,
+    B: HttpBody + Send + Sync + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync + 'static,
     F: Future<Output = ()>,
     E: Executor<H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
     E: Executor<NewSvcTask<IO, S::Future, S::Service, E, GracefulWatcher>> + Clone,
@@ -99,6 +100,8 @@ where
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     S: HttpService<Body>,
     E: Executor<H2Stream<S::Future, S::ResBody>> + Clone,
+    S::ResBody: Send + Sync + 'static,
+    <S::ResBody as HttpBody>::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
 {
     type Future =
         Watching<UpgradeableConnection<I, S, E>, fn(Pin<&mut UpgradeableConnection<I, S, E>>)>;
@@ -113,7 +116,8 @@ where
     S: HttpService<Body>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: AsyncRead + AsyncWrite + Unpin,
-    S::ResBody: Payload + 'static,
+    S::ResBody: HttpBody + Send + 'static,
+    <S::ResBody as HttpBody>::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Executor<H2Stream<S::Future, S::ResBody>> + Clone,
 {
     conn.graceful_shutdown()

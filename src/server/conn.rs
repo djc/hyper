@@ -21,7 +21,7 @@ use pin_project::{pin_project, project};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::Accept;
-use crate::body::{Body, Payload};
+use crate::body::{Body, HttpBody};
 use crate::common::exec::{Exec, Executor};
 use crate::common::io::Rewind;
 use crate::common::{task, Future, Pin, Poll, Unpin};
@@ -122,7 +122,7 @@ where
 pub(super) enum ProtoServer<T, B, S, E = Exec>
 where
     S: HttpService<Body>,
-    B: Payload,
+    B: HttpBody,
 {
     H1(
         #[pin]
@@ -429,7 +429,8 @@ impl<E> Http<E> {
     where
         S: HttpService<Body, ResBody = Bd>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        Bd: Payload,
+        Bd: HttpBody + 'static,
+        Bd::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
         I: AsyncRead + AsyncWrite + Unpin,
         E: Executor<H2Stream<S::Future, Bd>> + Clone,
     {
@@ -477,7 +478,7 @@ impl<E> Http<E> {
         IO: AsyncRead + AsyncWrite + Unpin,
         S: MakeServiceRef<IO, Body, ResBody = Bd>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        Bd: Payload,
+        Bd: HttpBody,
         E: Executor<H2Stream<<S::Service as HttpService<Body>>::Future, Bd>> + Clone,
     {
         Serve {
@@ -495,7 +496,8 @@ where
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: AsyncRead + AsyncWrite + Unpin,
-    B: Payload + 'static,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
     E: Executor<H2Stream<S::Future, B>> + Clone,
 {
     /// Start a graceful shutdown process for this connection.
@@ -640,7 +642,8 @@ where
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: AsyncRead + AsyncWrite + Unpin + 'static,
-    B: Payload + 'static,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
     E: Executor<H2Stream<S::Future, B>> + Clone,
 {
     type Output = crate::Result<()>;
@@ -707,7 +710,7 @@ where
     IO: AsyncRead + AsyncWrite + Unpin,
     IE: Into<Box<dyn StdError + Send + Sync>>,
     S: MakeServiceRef<IO, Body, ResBody = B>,
-    B: Payload,
+    B: HttpBody,
     E: Executor<H2Stream<<S::Service as HttpService<Body>>::Future, B>> + Clone,
 {
     fn poll_next_(
@@ -744,7 +747,8 @@ where
     I: AsyncRead + AsyncWrite + Unpin,
     F: Future<Output = Result<S, FE>>,
     S: HttpService<Body, ResBody = B>,
-    B: Payload,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Executor<H2Stream<S::Future, B>> + Clone,
 {
     type Output = Result<Connection<I, S, E>, FE>;
@@ -778,7 +782,7 @@ where
     IE: Into<Box<dyn StdError + Send + Sync>>,
     IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     S: MakeServiceRef<IO, Body, ResBody = B>,
-    B: Payload,
+    B: HttpBody,
     E: Executor<H2Stream<<S::Service as HttpService<Body>>::Future, B>> + Clone,
 {
     pub(super) fn poll_watch<W>(
@@ -809,7 +813,8 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Payload,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
     E: Executor<H2Stream<S::Future, B>>,
 {
     type Output = crate::Result<proto::Dispatched>;
@@ -829,7 +834,7 @@ pub(crate) mod spawn_all {
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use super::{Connecting, UpgradeableConnection};
-    use crate::body::{Body, Payload};
+    use crate::body::{Body, HttpBody};
     use crate::common::exec::{Executor, Task};
     use crate::common::{task, Future, Pin, Poll, Unpin};
     use crate::proto::h2::server::H2Stream;
@@ -859,6 +864,8 @@ pub(crate) mod spawn_all {
         I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         S: HttpService<Body>,
         E: Executor<H2Stream<S::Future, S::ResBody>> + Clone,
+        S::ResBody: 'static,
+        <S::ResBody as HttpBody>::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
     {
         type Future = UpgradeableConnection<I, S, E>;
 
@@ -904,7 +911,8 @@ pub(crate) mod spawn_all {
         N: Future<Output = Result<S, NE>>,
         NE: Into<Box<dyn StdError + Send + Sync>>,
         S: HttpService<Body, ResBody = B>,
-        B: Payload,
+        B: HttpBody + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
         E: Executor<H2Stream<S::Future, B>> + Clone,
         W: Watcher<I, S, E>,
     {
@@ -955,7 +963,8 @@ pub(crate) mod spawn_all {
         N: Future<Output = Result<S, NE>> + Send + 'static,
         NE: Into<Box<dyn StdError + Send + Sync>>,
         S: HttpService<Body, ResBody = B> + 'static,
-        B: Payload,
+        B: HttpBody + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
         E: Executor<H2Stream<S::Future, B>> + Clone + Send + 'static,
         W: Watcher<I, S, E> + Send + 'static,
         <W as Watcher<I, S, E>>::Future: Send,
@@ -989,7 +998,8 @@ mod upgrades {
         S: HttpService<Body, ResBody = B>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: AsyncRead + AsyncWrite + Unpin,
-        B: Payload + 'static,
+        B: HttpBody + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
         E: Executor<H2Stream<S::Future, B>> + Clone,
     {
         /// Start a graceful shutdown process for this connection.
@@ -1006,7 +1016,8 @@ mod upgrades {
         S: HttpService<Body, ResBody = B>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-        B: Payload + 'static,
+        B: HttpBody + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>> + Send,
         E: Executor<H2Stream<S::Future, B>> + Clone,
     {
         type Output = crate::Result<()>;

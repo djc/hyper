@@ -69,7 +69,7 @@ use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use self::accept::Accept;
-use crate::body::{Body, Payload};
+use crate::body::{Body, HttpBody};
 use crate::common::exec::{Exec, Executor};
 use crate::common::{task, Future, Pin, Poll, Unpin};
 use crate::proto;
@@ -153,7 +153,8 @@ where
     IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     S: MakeServiceRef<IO, Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Payload,
+    B: HttpBody + Send + Sync + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Executor<proto::h2::server::H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
     E: Executor<NewSvcTask<IO, S::Future, S::Service, E, GracefulWatcher>> + Clone,
 {
@@ -208,7 +209,8 @@ where
     IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     S: MakeServiceRef<IO, Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Payload,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
     E: Executor<proto::h2::server::H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
     E: Executor<NewSvcTask<IO, S::Future, S::Service, E, NoopWatcher>> + Clone,
 {
@@ -431,7 +433,8 @@ impl<I, E> Builder<I, E> {
         I::Conn: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         S: MakeServiceRef<I::Conn, Body, ResBody = B>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Payload,
+        B: HttpBody + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
         E: Executor<NewSvcTask<I::Conn, S::Future, S::Service, E, NoopWatcher>> + Clone,
         E: Executor<proto::h2::server::H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
     {
