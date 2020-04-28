@@ -10,9 +10,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{decode_content_length, ping, PipeToSendStream, SendBuf};
 use crate::body::HttpBody;
-use crate::common::{exec::Executor, exec::Task, task, Future, Pin, Poll};
+use crate::common::{exec::Executor, task, Future, Pin, Poll};
 use crate::headers;
-use crate::proto::Dispatched;
+use crate::proto::{Dispatched, HttpStream};
 use crate::service::HttpService;
 
 use crate::{Body, Response};
@@ -91,7 +91,7 @@ where
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     B: HttpBody + 'static,
-    E: Executor<H2Stream<S::Future, B>>,
+    E: Executor<HttpStream<S::Future, B>>,
 {
     pub(crate) fn new(io: T, service: S, config: &Config, exec: E) -> Server<T, S, B, E> {
         let mut builder = h2::server::Builder::default();
@@ -157,7 +157,7 @@ where
     S: HttpService<Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     B: HttpBody + 'static,
-    E: Executor<H2Stream<S::Future, B>>,
+    E: Executor<HttpStream<S::Future, B>>,
 {
     type Output = crate::Result<Dispatched>;
 
@@ -211,7 +211,7 @@ where
     where
         S: HttpService<Body, ResBody = B>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        E: Executor<H2Stream<S::Future, B>>,
+        E: Executor<HttpStream<S::Future, B>>,
     {
         if self.closing.is_none() {
             loop {
@@ -264,7 +264,7 @@ where
 
                         let req = req.map(|stream| crate::Body::h2(stream, content_length, ping));
                         let fut = H2Stream::new(service.call(req), respond);
-                        exec.execute(fut);
+                        exec.execute(HttpStream::H2(fut));
                     }
                     Some(Err(e)) => {
                         return Poll::Ready(Err(crate::Error::new_h2(e)));
@@ -363,7 +363,7 @@ where
     E: Into<Box<dyn StdError + Send + Sync>>,
 {
     #[project]
-    fn poll2(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<crate::Result<()>> {
+    pub(crate) fn poll2(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<crate::Result<()>> {
         let mut me = self.project();
         loop {
             #[project]
@@ -419,40 +419,4 @@ where
             me.state.set(next);
         }
     }
-}
-
-impl<F, B, E> Future for H2Stream<F, B>
-where
-    F: Future<Output = Result<Response<B>, E>>,
-    B: HttpBody,
-    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
-    E: Into<Box<dyn StdError + Send + Sync>>,
-{
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        self.poll2(cx).map(|res| {
-            if let Err(e) = res {
-                debug!("stream error: {}", e);
-            }
-        })
-    }
-}
-
-impl<F, B, E> Task for H2Stream<F, B>
-where
-    F: Future<Output = Result<Response<B>, E>> + Send + 'static,
-    B: HttpBody + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
-    E: Into<Box<dyn StdError + Send + Sync>>,
-{
-}
-
-impl<F, B, E> crate::common::exec::sealed::Sealed for H2Stream<F, B>
-where
-    F: Future<Output = Result<Response<B>, E>> + Send + 'static,
-    B: HttpBody,
-    E: Into<Box<dyn StdError + Send + Sync>>,
-{
 }

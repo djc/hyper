@@ -155,7 +155,7 @@ where
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     B: HttpBody + Send + Sync + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
-    E: Executor<proto::h2::server::H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
+    E: Executor<proto::HttpStream<<S::Service as HttpService<Body>>::Future, B>>,
     E: Executor<NewSvcTask<IO, S::Future, S::Service, E, GracefulWatcher>> + Clone,
 {
     /// Prepares a server to handle graceful shutdown when the provided future
@@ -211,7 +211,7 @@ where
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     B: HttpBody + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
-    E: Executor<proto::h2::server::H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
+    E: Executor<proto::HttpStream<<S::Service as HttpService<Body>>::Future, B>>,
     E: Executor<NewSvcTask<IO, S::Future, S::Service, E, NoopWatcher>> + Clone,
 {
     type Output = crate::Result<()>;
@@ -436,7 +436,7 @@ impl<I, E> Builder<I, E> {
         B: HttpBody + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
         E: Executor<NewSvcTask<I::Conn, S::Future, S::Service, E, NoopWatcher>> + Clone,
-        E: Executor<proto::h2::server::H2Stream<<S::Service as HttpService<Body>>::Future, B>>,
+        E: Executor<proto::HttpStream<<S::Service as HttpService<Body>>::Future, B>>,
     {
         let serve = self.protocol.serve(self.incoming, new_service);
         let spawn_all = serve.spawn_all();

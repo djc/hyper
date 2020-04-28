@@ -1,5 +1,15 @@
 //! Pieces pertaining to the HTTP message protocol.
+use std::error::Error as StdError;
+
 use http::{HeaderMap, Method, StatusCode, Uri, Version};
+use http_body::Body as HttpBody;
+use pin_project::{pin_project, project};
+
+use crate::{
+    common::{task, Future, Pin, Poll},
+    common::exec::Task,
+    Response,
+};
 
 pub(crate) use self::body_length::DecodedLength;
 pub(crate) use self::h1::{dispatch, Conn, ServerTransaction};
@@ -41,6 +51,58 @@ pub(crate) enum Dispatched {
     Shutdown,
     /// Dispatcher has pending upgrade, and so did not shutdown.
     Upgrade(crate::upgrade::Pending),
+}
+
+#[pin_project]
+#[allow(missing_debug_implementations)]
+pub enum HttpStream<F, B>
+where
+    B: HttpBody,
+{
+    H2(#[pin] h2::server::H2Stream<F, B>),
+}
+
+impl<F, B, E> Future for HttpStream<F, B>
+where
+    F: Future<Output = Result<Response<B>, E>>,
+    B: HttpBody,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
+    E: Into<Box<dyn StdError + Send + Sync>>,
+{
+    type Output = ();
+
+    #[project]
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        #[project]
+        match self.project() {
+            HttpStream::H2(h2) => {
+                h2.poll2(cx).map(|res| {
+                    if let Err(e) = res {
+                        debug!("stream error: {}", e);
+                    }
+                })
+            }
+        }
+    }
+}
+
+
+impl<F, B, E> Task for HttpStream<F, B>
+where
+    F: Future<Output = Result<Response<B>, E>> + Send + 'static,
+    B: HttpBody + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
+    E: Into<Box<dyn StdError + Send + Sync>>,
+{
+}
+
+impl<F, B, E> crate::common::exec::sealed::Sealed for HttpStream<F, B>
+where
+    F: Future<Output = Result<Response<B>, E>> + Send + 'static,
+    B: HttpBody,
+    E: Into<Box<dyn StdError + Send + Sync>>,
+{
 }
 
 /// A separate module to encapsulate the invariants of the DecodedLength type.
